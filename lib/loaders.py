@@ -103,3 +103,7 @@ def load_champion_activity():
 @st.cache_data
 def load_workflow_stories():
     return read_csv("workflow_stories.csv", parse_dates=["week"])
+
+@st.cache_data
+def load_tickets():
+    return load_support_tickets()
