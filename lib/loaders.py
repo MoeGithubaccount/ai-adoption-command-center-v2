@@ -1,67 +1,105 @@
-"""Cached data loaders. All access is cohort-level only."""
-
 from pathlib import Path
+import runpy
+
 import pandas as pd
 import streamlit as st
 
-DATA = Path(__file__).parent.parent / "data"
 
-MIN_COHORT_SIZE = 10  # Hard floor. Cohorts smaller than this are suppressed everywhere.
+ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "data"
+
+REQUIRED_FILES = [
+    "employees.csv",
+    "usage_weekly.csv",
+    "training_events.csv",
+    "training_attendance.csv",
+    "support_tickets.csv",
+    "surveys.csv",
+    "manager_reinforcement.csv",
+    "champion_activity.csv",
+    "workflow_stories.csv",
+]
+
+
+def ensure_generated_data():
+    """
+    Generate the synthetic CSV files if they are missing.
+
+    The public app uses synthetic data only. This function runs data/generate_data.py
+    on first deploy/cold start if the generated CSVs were not uploaded to GitHub.
+    """
+    DATA.mkdir(exist_ok=True)
+
+    missing = [name for name in REQUIRED_FILES if not (DATA / name).exists()]
+    if not missing:
+        return
+
+    generator = DATA / "generate_data.py"
+
+    if not generator.exists():
+        st.error(
+            "Synthetic data files are missing, and data/generate_data.py was not found. "
+            "Upload either the generated CSV files or the generate_data.py file."
+        )
+        st.stop()
+
+    # Run the synthetic data generator. It should write CSVs into the data/ folder.
+    runpy.run_path(str(generator), run_name="__main__")
+
+    still_missing = [name for name in REQUIRED_FILES if not (DATA / name).exists()]
+    if still_missing:
+        st.error(
+            "The synthetic data generator ran, but some expected files were still missing: "
+            + ", ".join(still_missing)
+        )
+        st.stop()
+
+
+def read_csv(filename, parse_dates=None):
+    ensure_generated_data()
+    return pd.read_csv(DATA / filename, parse_dates=parse_dates or [])
 
 
 @st.cache_data
 def load_employees():
-    return pd.read_csv(DATA / "employees.csv", parse_dates=["license_assigned_date"])
+    return read_csv("employees.csv", parse_dates=["license_assigned_date"])
 
 
 @st.cache_data
 def load_usage_weekly():
-    return pd.read_csv(DATA / "usage_weekly.csv", parse_dates=["week_start"])
+    return read_csv("usage_weekly.csv", parse_dates=["week_start"])
 
 
 @st.cache_data
-def load_tickets():
-    return pd.read_csv(DATA / "support_tickets.csv", parse_dates=["week"])
+def load_training_events():
+    return read_csv("training_events.csv", parse_dates=["date"])
+
+
+@st.cache_data
+def load_training_attendance():
+    return read_csv("training_attendance.csv")
+
+
+@st.cache_data
+def load_support_tickets():
+    return read_csv("support_tickets.csv", parse_dates=["week"])
 
 
 @st.cache_data
 def load_surveys():
-    return pd.read_csv(DATA / "survey_responses.csv", parse_dates=["month"])
+    return read_csv("surveys.csv", parse_dates=["month"])
 
 
 @st.cache_data
 def load_manager_reinforcement():
-    return pd.read_csv(DATA / "manager_reinforcement.csv", parse_dates=["week"])
+    return read_csv("manager_reinforcement.csv", parse_dates=["week"])
 
 
 @st.cache_data
-def load_training():
-    events = pd.read_csv(DATA / "training_events.csv", parse_dates=["date"])
-    attendance = pd.read_csv(DATA / "training_attendance.csv")
-    return events, attendance
+def load_champion_activity():
+    return read_csv("champion_activity.csv", parse_dates=["week"])
 
 
 @st.cache_data
-def load_champions():
-    return pd.read_csv(DATA / "champion_activity.csv", parse_dates=["week"])
-
-
-@st.cache_data
-def load_stories():
-    return pd.read_csv(DATA / "workflow_stories.csv", parse_dates=["week"])
-
-
-def department_health(usage, employees, ref_week=None):
-    """Compute department-level adoption health, cohort-suppressed."""
-    licensed = employees[employees.copilot_licensed].groupby("department").size().rename("licensed")
-    if ref_week is None:
-        ref_week = usage.week_start.max()
-
-    window = usage[usage.week_start >= ref_week - pd.Timedelta(weeks=6)]
-    active_6w = window.groupby(["department", "employee_id"]).size().reset_index(name="weeks_active")
-    sustained = (active_6w.weeks_active >= 4).groupby(active_6w.department).sum().rename("sustained_users")
-
-    out = pd.concat([licensed, sustained], axis=1).fillna(0)
-    out["sustained_rate"] = (out.sustained_users / out.licensed).fillna(0)
-    out = out[out.licensed >= MIN_COHORT_SIZE]  # suppress small cohorts
-    return out.reset_index()
+def load_workflow_stories():
+    return read_csv("workflow_stories.csv", parse_dates=["week"])
